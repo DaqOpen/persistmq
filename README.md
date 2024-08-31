@@ -6,7 +6,7 @@ It is mainly designed for edge devices to  reliable transfer produced data even 
 
 ## Table of Contents
 - [Features](#features)
-- [Intended Use](#Intended Use)
+- [Intended Use](#Intended-Use)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Contributing](#contributing)
