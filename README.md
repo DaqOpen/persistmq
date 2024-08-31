@@ -6,6 +6,7 @@ It is mainly designed for edge devices to  reliable transfer produced data even 
 
 ## Table of Contents
 - [Features](#features)
+- [Intended Use](#Intended Use)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Contributing](#contributing)
@@ -16,6 +17,20 @@ It is mainly designed for edge devices to  reliable transfer produced data even 
 - **Message Caching:** Messages, which are not received by the broker are cached on the file system for later retries
 - **Caching Methods:** Cache large messages directly to pickle or leightweight to sqlite database
 - **Ease of Use:** Simple API for integrating with your application, allowing you to move easily from paho.mqtt bare implementation.
+
+## Intended Use
+
+✅When you should use this library:
+
+- Long running applications which produces cyclically data (e.g. measurement devices)
+- Historic data is important, not only the most recent (provide timestamp in your payload!)
+- Typical message transmission time is lower than your message period (a jam could occur)
+- QoS=2 is necessary
+
+❌When you better go with others:
+
+- High amount of messages (more than 10 per Second)
+- QoS=0 is enough
 
 ## Installation
 For easy use, this package can be installed via pip from pypi:
@@ -73,6 +88,14 @@ When publishing a message with the RobustClient, it follows this flow:
    2. the caching is going on until the message has been successfully published
 5. When the publish was successful, this meanwhile cached message is deleted
 6. at the next loop, it will be checked, if cached data is available and starts publishing that
+
+
+
+## Roadmap
+
+A quick and dirty roadmap to show what is planned for the future:
+
+- Transmission of "Bulk" messages: In unreliable networks, the QoS=2 ping-pong of MQTT takes a long time and can generate unnecessary delay when transmitting many messages
 
 
 
