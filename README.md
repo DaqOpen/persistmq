@@ -18,7 +18,13 @@ It is mainly designed for edge devices to  reliable transfer produced data even 
 - **Ease of Use:** Simple API for integrating with your application, allowing you to move easily from paho.mqtt bare implementation.
 
 ## Installation
-To install **RobustMQ**, you can clone the repository and install the required dependencies:
+For easy use, this package can be installed via pip from pypi:
+
+```bash
+pip install robustmq
+```
+
+As an alternative, you can clone the repository and install the required dependencies:
 
 
 ```bash
