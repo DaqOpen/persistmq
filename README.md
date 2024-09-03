@@ -1,6 +1,6 @@
-# RobustMQ
+# PersistMQ
 
-**RobustMQ** is a reliable on-top mqtt-module designed to support dealing with unreliable connections. This project is aimed at providing a robust, easy-to-use messaging solution.
+**PersistMQ** is a reliable on-top mqtt-module designed to support dealing with unreliable connections. This project is aimed at providing a robust, easy-to-use messaging solution.
 
 It is mainly designed for edge devices to  reliable transfer produced data even when there are power outages or longer connection troubles. The messages are cached on the file system to be reloaded again when the data transfer is possible.
 
@@ -36,28 +36,28 @@ It is mainly designed for edge devices to  reliable transfer produced data even 
 For easy use, this package can be installed via pip from pypi:
 
 ```bash
-pip install robustmq
+pip install persistmq
 ```
 
 As an alternative, you can clone the repository and install the required dependencies:
 
 
 ```bash
-git clone https://github.com/DaqOpen/robustmq.git
-cd robustmq
+git clone https://github.com/DaqOpen/persistmq.git
+cd persistmq
 pip install .
 ```
 
 ## Usage
-Here is a simple example of how to use RobustMQ in your project:
+Here is a simple example of how to use PersistMQ in your project:
 
 ```python
 import time
 from pathlib import Path
-from robustmq.client import RobustClient
+from persistmq.client import PersistClient
 
-# Create a RobustClient instance
-my_robust_client = RobustClient(client_id="testclient", cache_path=Path("/tmp/mymqttcache"))
+# Create a PersistClient instance
+my_robust_client = PersistClient(client_id="testclient", cache_path=Path("/tmp/mymqttcache"))
 # Establish a connection to the mqtt broker
 my_robust_client.connect_async(mqtt_host="localhost")
 
@@ -78,7 +78,7 @@ First, a separate process is spawned after the call of connect_async. This is do
 
 The main goal is, to only put message by message into the queue of the mqtt-client, when the previous was sent successfully. This may reduce performance but allows to preserve messages when there are errors.
 
-When publishing a message with the RobustClient, it follows this flow:
+When publishing a message with the PersistClient, it follows this flow:
 
 1. message is queued in the multiprocessing queue
 2. the worker process checks the queue and consumes **one** message if available
@@ -101,7 +101,7 @@ A quick and dirty roadmap to show what is planned for the future:
 
 ## Contributing
 
-I welcome contributions to **RobustMQ**! If you'd like to contribute, please fork the repository, create a new branch, and submit a pull request.
+I welcome contributions to **PersistMQ**! If you'd like to contribute, please fork the repository, create a new branch, and submit a pull request.
 
 ## License
 

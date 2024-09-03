@@ -2,21 +2,21 @@
 Module Name: client.py
 
 Description:
-This module contains the relevant classes for the robustmq functionality.
+This module contains the relevant classes for the persistmq functionality.
 It provides a convinient interface for moving from pure paho-mqtt.
 The Client spawns a process which runs in parallel and caches the queued data, if there are communication problems
 
 Usage:
-Import the RobustClient class and create an instance:
-    from robustmq.client import RobustClient
-    my_client = RobustClient(client_id="testclient", cache_path=Path("/tmp/mymqttcache"))
+Import the PersistClient class and create an instance:
+    from persistmq.client import PersistClient
+    my_client = PersistClient(client_id="testclient", cache_path=Path("/tmp/mymqttcache"))
     my_client.connect_async(mqtt_host="localhost")
-    my_robust_client.publish("dt/blah", "Test Message")
-    my_robust_client.stop()
+    my_persist_client.publish("dt/blah", "Test Message")
+    my_persist_client.stop()
 
 Classes:
-- RobustClient: The class for convinient usage of the RobustMqWorker
-- RobustMqWorker: Worker class (do not use directly)
+- PersistClient: The class for convinient usage of the PersistMqWorker
+- PersistMqWorker: Worker class (do not use directly)
 
 Depends on:
 - paho.mqtt
@@ -43,9 +43,9 @@ import logging
 
 logger = logger = logging.getLogger(__name__)
 
-class RobustClient(object):
+class PersistClient(object):
     def __init__(self, client_id: str, cache_type: str = "sq3", cache_path: Path = Path("./cache"), **kwargs):
-        """Create an instance of RobustClient
+        """Create an instance of PersistClient
 
         Args:
             client_id (str): id for underlying mqtt-client
@@ -90,11 +90,13 @@ class RobustClient(object):
 
     @staticmethod
     def _mqtt_worker( mqtt_client: Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
-        RobustMqWorker(mqtt_client, mqtt_host, mqtt_port, message_q, command_q, cache_path, **kwargs).run()
+        PersistMqWorker(mqtt_client, mqtt_host, mqtt_port, message_q, command_q, cache_path, **kwargs).run()
 
 
 
-class RobustMqWorker:
+class PersistMqWorker:
+    QUEUE_CACHE_THRESHOLD = 100 # Cache messages, if queue exceeds this amount of messages
+
     def __init__(self, mqtt_client: Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
         """Worker class for actual processing the messages
 
@@ -116,7 +118,7 @@ class RobustMqWorker:
         self.mqtt_client.on_connect = self.on_connect
         self.mqtt_client.on_publish = self.on_publish
         self.cache_path.mkdir(exist_ok=True)
-        self.file_prefix = "robustmq_cache_"
+        self.file_prefix = "persistmq_cache_"
         self.last_time_checked_cache = 0
         self._stop_loop = False
         self.cache_timeout = 10
@@ -241,7 +243,7 @@ class RobustMqWorker:
                 self._handle_command()
                 first_msg_loop = False
                 # Cache data which stucks in MQTT Output Queue
-                if (time.time() > (loop_start_time + self.cache_timeout)) or self._stop_loop:
+                if (time.time() > (loop_start_time + self.cache_timeout)) or self._stop_loop or (self.message_q.qsize() > self.QUEUE_CACHE_THRESHOLD):
                     if data_obj and not cache_instance:
                         self._put_data_to_cache(data_obj)
                         data_obj = None # Reset Object
