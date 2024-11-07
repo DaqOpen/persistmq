@@ -38,7 +38,8 @@ import uuid
 import sqlite3
 import logging
 
-logger = logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+#logger.setLevel(logging.DEBUG)
 
 class PersistClient(object):
     def __init__(self, client_id: str, cache_type: str = "sq3", cache_path: Path = Path("./cache"), **kwargs):
@@ -215,15 +216,18 @@ class PersistMqWorker:
             cache_instance, data_obj = self._get_data_from_cache()
                 
             # Load Data from Queue to be sent next (Cache is cleared)
-            while not self._stop_loop and data_obj is not None:
+            while (not self._stop_loop) and (data_obj is None):
                 if not self.message_q.empty():
+                    logger.debug("Wait for new message")
                     data_obj = self.message_q.get() # Block until new Item available
                     break
                 else:
                     time.sleep(0.1)
                 self._handle_command()
-            else:
-                break # Break from Main loop if loop completed
+
+            # Break worker loop here if stop requested
+            if self._stop_loop:
+                break
 
             # Put Data into MQTT Client for Publish
             self.mqtt_client.message_published = False
