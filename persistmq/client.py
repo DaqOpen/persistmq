@@ -24,11 +24,8 @@ Depends on:
 Author:
 Michael Oberhofer
 
-Version:
-0.0.1
-
 Date:
-August 31, 2024
+Nov. 7, 2024
 """
 
 from multiprocessing import Process, Queue 
@@ -218,7 +215,7 @@ class PersistMqWorker:
             cache_instance, data_obj = self._get_data_from_cache()
                 
             # Load Data from Queue to be sent next (Cache is cleared)
-            while not self._stop_loop:
+            while not self._stop_loop and data_obj is not None:
                 if not self.message_q.empty():
                     data_obj = self.message_q.get() # Block until new Item available
                     break
