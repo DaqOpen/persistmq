@@ -29,7 +29,7 @@ Nov. 7, 2024
 """
 
 from multiprocessing import Process, Queue 
-from paho.mqtt.client import Client
+from paho.mqtt import client as mqtt
 from pathlib import Path
 from typing import Union
 import time
@@ -53,7 +53,7 @@ class PersistClient(object):
         """
         self._message_q = Queue()
         self._command_q = Queue()
-        self.mqtt_client = Client(client_id=client_id, **kwargs)
+        self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id, **kwargs)
         self._cache_path = cache_path
 
     def connect_async(self, mqtt_host: str, mqtt_port: int = 1883, **kwargs):
@@ -86,8 +86,11 @@ class PersistClient(object):
         self._worker.join()
         self._worker.terminate()
 
+    def __del__(self):
+        self.stop()
+
     @staticmethod
-    def _mqtt_worker( mqtt_client: Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
+    def _mqtt_worker( mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
         PersistMqWorker(mqtt_client, mqtt_host, mqtt_port, message_q, command_q, cache_path, **kwargs).run()
 
 
@@ -95,7 +98,7 @@ class PersistClient(object):
 class PersistMqWorker:
     QUEUE_CACHE_THRESHOLD = 100 # Cache messages, if queue exceeds this amount of messages
 
-    def __init__(self, mqtt_client: Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
+    def __init__(self, mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
         """Worker class for actual processing the messages
 
         Args:
@@ -263,14 +266,15 @@ class PersistMqWorker:
                 data_obj = None
                 if cache_instance:
                     self._remove_cache_instance(cache_instance)
+        logger.info("Loop Stopped")
 
-    def on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
+    def on_connect(self, client, userdata, flags, reason_code, properties):
+        if reason_code == 0:
             logger.info("Connection to mqtt broker established")
         else:
             logger.info(f"Connection to mqtt broker broken: return code {rc:d}")
 
-    def on_publish(self, client, userdata, mid):
+    def on_publish(self, client, userdata, mid, reason_code, properties):
         logger.debug(f"Published Message with mid {mid:d}")
         self.mqtt_client.message_published = True
 
