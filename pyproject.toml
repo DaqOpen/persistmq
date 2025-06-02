@@ -4,16 +4,17 @@ build-backend = "hatchling.build"
 
 [project]
 name = "persistmq"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
-    "paho.mqtt"
+    "paho.mqtt",
+    "cbor2"
 ]
 authors = [
   { name="Michael Oberhofer", email="info@pqopen.com" },
 ]
 description = "A robust mqtt library with message caching"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",

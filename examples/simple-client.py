@@ -11,7 +11,7 @@ from persistmq.client import PersistClient
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # Create a PersistClient instance
-my_persist_client = PersistClient(client_id="testclient", cache_path=Path("/tmp/mymqttcache"))
+my_persist_client = PersistClient(client_id="testclient", cache_path=Path("/tmp/mymqttcache"), bulk_msg_count=10, bulk_topic_rewrite="bulk")
 # Configure additional options like username and password
 my_persist_client.mqtt_client.username_pw_set(username="michael", password="passwd") # Optionally Configure MQTT Client itself
 # Establish a connection to the mqtt broker

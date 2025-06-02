@@ -37,24 +37,30 @@ import pickle
 import uuid
 import sqlite3
 import logging
+import json
+import cbor2
 
 logger = logging.getLogger(__name__)
 #logger.setLevel(logging.DEBUG)
 
 class PersistClient(object):
-    def __init__(self, client_id: str, cache_type: str = "sq3", cache_path: Path = Path("./cache"), **kwargs):
+    def __init__(self, client_id: str, cache_type: str = "sq3", cache_path: Path = Path("./cache"), bulk_msg_count: int = 0, bulk_topic_rewrite: str = "mixed/bulk", **kwargs):
         """Create an instance of PersistClient
 
         Args:
-            client_id (str): id for underlying mqtt-client
-            cache_type (str, optional): method of caching ["sq3", "pickle"]. Defaults to "sq3".
-            cache_path (Path, optional): path for cache file(s). Defaults to Path("./cache").
+            client_id: id for underlying mqtt-client
+            cache_type: method of caching ["sq3", "pickle"]. Defaults to "sq3".
+            cache_path: path for cache file(s). Defaults to Path("./cache").
+            bulk_msg_count: if the cache exceeds this number of messages, bulk transfer of this messages is performed (0=disabled)
+            bulk_topic_rewrite: in case of bulk transfer, the topic postfix is replaced with this string
             **kwargs: additional arguments for paho-client
         """
         self._message_q = Queue()
         self._command_q = Queue()
         self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id, **kwargs)
         self._cache_path = cache_path
+        self._bulk_msg_count = bulk_msg_count
+        self._bulk_topic_rewrite = bulk_topic_rewrite
 
     def connect_async(self, mqtt_host: str, mqtt_port: int = 1883, **kwargs):
         """Start the worker process with connection to broker (uses paho mqtt connect_async method)
@@ -64,7 +70,7 @@ class PersistClient(object):
             mqtt_port (int, optional): port of broker. Defaults to 1883.
             kwargs (optional): additional parameter for paho mqtt connect_async
         """
-        self._worker = Process(target=self._mqtt_worker, args=(self.mqtt_client, mqtt_host, mqtt_port, self._message_q, self._command_q, self._cache_path), kwargs=kwargs)
+        self._worker = Process(target=self._mqtt_worker, daemon=True, args=(self.mqtt_client, mqtt_host, mqtt_port, self._message_q, self._command_q, self._cache_path, self._bulk_msg_count, self._bulk_topic_rewrite), kwargs=kwargs)
         self._worker.start()
         
     def publish(self, topic: str, payload: Union[str, bytes, bytearray, int, float, None], qos: int = 2):
@@ -83,31 +89,33 @@ class PersistClient(object):
         """Gently stop the worker and cache remaining data from queue
         """
         self._command_q.put("STOP")
-        self._worker.join()
         self._worker.terminate()
+        self._worker.join()
 
     def __del__(self):
         self.stop()
 
     @staticmethod
-    def _mqtt_worker( mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
-        PersistMqWorker(mqtt_client, mqtt_host, mqtt_port, message_q, command_q, cache_path, **kwargs).run()
+    def _mqtt_worker( mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, bulk_msg_count: int, bulk_topic_rewrite: str, **kwargs):
+        PersistMqWorker(mqtt_client, mqtt_host, mqtt_port, message_q, command_q, cache_path, bulk_msg_count, bulk_topic_rewrite, **kwargs).run()
 
 
 
 class PersistMqWorker:
     QUEUE_CACHE_THRESHOLD = 100 # Cache messages, if queue exceeds this amount of messages
 
-    def __init__(self, mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, **kwargs):
+    def __init__(self, mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, bulk_msg_count: int = 0, bulk_topic_rewrite: str = "mixed/cbor", **kwargs):
         """Worker class for actual processing the messages
 
         Args:
-            mqtt_client (Client): paho-mqtt client instance to be used for actual publishing
-            mqtt_host (str): hostname/ip of the mqtt broker to connect
-            mqtt_port (int): port of the mqtt broker to connect
-            message_q (Queue): queue for messages
-            command_q (Queue): queue for worker commands
-            cache_path (Path): cache path for either files or database
+            mqtt_client: paho-mqtt client instance to be used for actual publishing
+            mqtt_host: hostname/ip of the mqtt broker to connect
+            mqtt_port: port of the mqtt broker to connect
+            message_q: queue for messages
+            command_q: queue for worker commands
+            cache_path: cache path for either files or database
+            bulk_msg_count: if the cache exceeds this number of messages, bulk transfer of this messages is performed (0=disabled)
+            bulk_topic_rewrite: in case of bulk transfer, the topic postfix is replaced with this string
         """
         self.mqtt_client = mqtt_client
         self.mqtt_host = mqtt_host
@@ -115,6 +123,8 @@ class PersistMqWorker:
         self.message_q = message_q
         self.command_q = command_q
         self.cache_path = cache_path
+        self.bulk_msg_count = bulk_msg_count
+        self.bulk_topic_rewrite = bulk_topic_rewrite
         self._connect_kwargs = kwargs
         self.mqtt_client.on_connect = self.on_connect
         self.mqtt_client.on_publish = self.on_publish
@@ -158,31 +168,54 @@ class PersistMqWorker:
             logger.debug("Loaded data from cache file")
         return cache_file, data_obj
 
-    def _get_cache_from_database(self):
+    def _get_cache_from_database(self, use_bulk = False):
+        if use_bulk:
+            payload = []
+            data_id = []
+            bulk_topic_parts = len(self.bulk_topic_rewrite.split("/"))
+            self.db_cursor.execute(f'SELECT id, topic, payload, qos FROM messages ORDER BY id ASC LIMIT {self.bulk_msg_count:d}')
+            result = self.db_cursor.fetchall()
+            for entry in result:
+                subtopic = "/".join(entry[1].split("/")[-bulk_topic_parts:])
+                payload.append({"subtopic": subtopic, "payload": entry[2]})
+                data_id.append(entry[0])
+            topic_prefix = "/".join(entry[1].split("/")[:-bulk_topic_parts])
+            data_obj = {"topic": topic_prefix + "/" + self.bulk_topic_rewrite,
+                        "payload": cbor2.dumps(payload),
+                        "qos": entry[3]}
+            logger.debug("Loaded bulk message from cache database")
         # Read Database
-        self.db_cursor.execute('SELECT id, topic, payload, qos FROM messages ORDER BY id ASC LIMIT 1')
-        result = self.db_cursor.fetchone()
-        data_obj = None
-        data_id = None
-        if result:
-            data_obj = {"topic": result[1],
-                        "payload": result[2],
-                        "qos": result[3]}
-            data_id = result[0]
-            logger.debug("Loaded data from cache database")
+        else:
+            self.db_cursor.execute('SELECT id, topic, payload, qos FROM messages ORDER BY id ASC LIMIT 1')
+            result = self.db_cursor.fetchone()
+            data_obj = None
+            data_id = None
+            if result:
+                data_obj = {"topic": result[1],
+                            "payload": result[2],
+                            "qos": result[3]}
+                data_id = result[0]
+            logger.debug("Loaded single message from cache database")
         return data_id, data_obj
 
     def _get_data_from_cache(self):
         if self._cache_type == "pickle":
             return self._get_cache_from_file()
         elif self._cache_type == "sq3":
-            return self._get_cache_from_database()       
+            if self.bulk_msg_count and (self._count_cached_messages() >= self.bulk_msg_count):
+                return self._get_cache_from_database(use_bulk=True)
+            else:
+                return self._get_cache_from_database(use_bulk=False)
 
     def _remove_cache_instance(self, cache_instance):
         if self._cache_type == "pickle":
             cache_instance.unlink()
         elif self._cache_type == "sq3":
-            self.db_cursor.execute('DELETE FROM messages WHERE id = ?', (cache_instance,))
+            if isinstance(cache_instance, list):
+                for id in cache_instance:
+                    self.db_cursor.execute('DELETE FROM messages WHERE id = ?', (id,))        
+            else:
+                self.db_cursor.execute('DELETE FROM messages WHERE id = ?', (cache_instance,))
             self.db_connection.commit()
 
     def _put_data_to_file(self, data_obj):
@@ -203,7 +236,15 @@ class PersistMqWorker:
         if self._cache_type == "pickle":
             self._put_data_to_file(data_obj)
         elif self._cache_type == "sq3":
-            self._put_data_to_database(data_obj)      
+            self._put_data_to_database(data_obj)
+
+    def _count_cached_messages(self):
+        if self._cache_type == "pickle":
+            raise NotImplementedError
+        elif self._cache_type == "sq3":
+            self.db_cursor.execute(f'SELECT count(*) FROM messages')
+            result = self.db_cursor.fetchone()
+            return result[0]
 
     def run(self):
         self.mqtt_client.message_published = True
@@ -272,7 +313,7 @@ class PersistMqWorker:
         if reason_code == 0:
             logger.info("Connection to mqtt broker established")
         else:
-            logger.info(f"Connection to mqtt broker broken: return code {rc:d}")
+            logger.info(f"Connection to mqtt broker broken: return code {reason_code:d}")
 
     def on_publish(self, client, userdata, mid, reason_code, properties):
         logger.debug(f"Published Message with mid {mid:d}")
