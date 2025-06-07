@@ -134,6 +134,7 @@ class PersistMqWorker:
         self.bulk_topic_rewrite = bulk_topic_rewrite
         self._connect_kwargs = kwargs
         self.mqtt_client.on_connect = self.on_connect
+        self.mqtt_client.on_disconnect = self.on_disconnect
         self.mqtt_client.on_publish = self.on_publish
         self.cache_path.mkdir(exist_ok=True)
         self.file_prefix = "persistmq_cache_"
@@ -298,6 +299,7 @@ class PersistMqWorker:
             while not self.mqtt_client.message_published or first_msg_loop:
                 # Check Process Command Queue
                 self._handle_command()
+                self.status["connected"] = self.mqtt_client.is_connected()
                 first_msg_loop = False
                 # Cache data which stucks in MQTT Output Queue
                 if (time.time() > (loop_start_time + self.cache_timeout)) or self._stop_loop or (self.message_q.qsize() > self.QUEUE_CACHE_THRESHOLD):
@@ -327,6 +329,11 @@ class PersistMqWorker:
             self.status["connected"] = True
         else:
             logger.info(f"Connection to mqtt broker broken: return code {reason_code:d}")
+            self.status["connected"] = False
+
+    def on_disconnect(self, client, userdata, flags, reason_code, properties):
+        if reason_code == 0:
+            logger.info("Disconnected from mqtt broker")
             self.status["connected"] = False
 
     def on_publish(self, client, userdata, mid, reason_code, properties):
