@@ -28,7 +28,7 @@ Date:
 Nov. 7, 2024
 """
 
-from multiprocessing import Process, Queue 
+from multiprocessing import Process, Queue, Manager
 from paho.mqtt import client as mqtt
 from pathlib import Path
 from typing import Union
@@ -55,6 +55,9 @@ class PersistClient(object):
             bulk_topic_rewrite: in case of bulk transfer, the topic postfix is replaced with this string
             **kwargs: additional arguments for paho-client
         """
+        self._manager = Manager()
+        self._status = self._manager.dict()
+        self._status.update({"connected": False, "last_mid": None, "cached_items": 0})
         self._message_q = Queue()
         self._command_q = Queue()
         self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id, **kwargs)
@@ -70,7 +73,7 @@ class PersistClient(object):
             mqtt_port (int, optional): port of broker. Defaults to 1883.
             kwargs (optional): additional parameter for paho mqtt connect_async
         """
-        self._worker = Process(target=self._mqtt_worker, daemon=True, args=(self.mqtt_client, mqtt_host, mqtt_port, self._message_q, self._command_q, self._cache_path, self._bulk_msg_count, self._bulk_topic_rewrite), kwargs=kwargs)
+        self._worker = Process(target=self._mqtt_worker, daemon=True, args=(self.mqtt_client, mqtt_host, mqtt_port, self._message_q, self._command_q, self._status, self._cache_path, self._bulk_msg_count, self._bulk_topic_rewrite), kwargs=kwargs)
         self._worker.start()
         
     def publish(self, topic: str, payload: Union[str, bytes, bytearray, int, float, None], qos: int = 2):
@@ -84,6 +87,9 @@ class PersistClient(object):
         self._message_q.put({"topic": topic,
                            "payload": payload,
                            "qos": qos})
+
+    def get_status(self):
+        return dict(self._status)
     
     def stop(self):
         """Gently stop the worker and cache remaining data from queue
@@ -96,15 +102,15 @@ class PersistClient(object):
         self.stop()
 
     @staticmethod
-    def _mqtt_worker( mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, bulk_msg_count: int, bulk_topic_rewrite: str, **kwargs):
-        PersistMqWorker(mqtt_client, mqtt_host, mqtt_port, message_q, command_q, cache_path, bulk_msg_count, bulk_topic_rewrite, **kwargs).run()
+    def _mqtt_worker( mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, status, cache_path: Path, bulk_msg_count: int, bulk_topic_rewrite: str, **kwargs):
+        PersistMqWorker(mqtt_client, mqtt_host, mqtt_port, message_q, command_q, status, cache_path, bulk_msg_count, bulk_topic_rewrite, **kwargs).run()
 
 
 
 class PersistMqWorker:
     QUEUE_CACHE_THRESHOLD = 100 # Cache messages, if queue exceeds this amount of messages
 
-    def __init__(self, mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, cache_path: Path, bulk_msg_count: int = 0, bulk_topic_rewrite: str = "mixed/cbor", **kwargs):
+    def __init__(self, mqtt_client: mqtt.Client, mqtt_host: str, mqtt_port: int, message_q: Queue, command_q: Queue, status, cache_path: Path, bulk_msg_count: int = 0, bulk_topic_rewrite: str = "mixed/cbor", **kwargs):
         """Worker class for actual processing the messages
 
         Args:
@@ -122,6 +128,7 @@ class PersistMqWorker:
         self.mqtt_port = mqtt_port
         self.message_q = message_q
         self.command_q = command_q
+        self.status = status
         self.cache_path = cache_path
         self.bulk_msg_count = bulk_msg_count
         self.bulk_topic_rewrite = bulk_topic_rewrite
@@ -217,6 +224,7 @@ class PersistMqWorker:
             else:
                 self.db_cursor.execute('DELETE FROM messages WHERE id = ?', (cache_instance,))
             self.db_connection.commit()
+        self.status["cached_items"] = self._count_cached_messages()
 
     def _put_data_to_file(self, data_obj):
         filename = self.file_prefix + str(uuid.uuid4()) + ".pkl"
@@ -237,6 +245,7 @@ class PersistMqWorker:
             self._put_data_to_file(data_obj)
         elif self._cache_type == "sq3":
             self._put_data_to_database(data_obj)
+        self.status["cached_items"] = self._count_cached_messages()
 
     def _count_cached_messages(self):
         if self._cache_type == "pickle":
@@ -255,7 +264,10 @@ class PersistMqWorker:
 
         while not self._stop_loop:
             self._handle_command()
-            
+
+            # Set cache status
+            self.status["cached_items"] = self._count_cached_messages()
+
             # Load Data from cache (if exists)
             cache_instance, data_obj = self._get_data_from_cache()
                 
@@ -312,11 +324,14 @@ class PersistMqWorker:
     def on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
             logger.info("Connection to mqtt broker established")
+            self.status["connected"] = True
         else:
             logger.info(f"Connection to mqtt broker broken: return code {reason_code:d}")
+            self.status["connected"] = False
 
     def on_publish(self, client, userdata, mid, reason_code, properties):
         logger.debug(f"Published Message with mid {mid:d}")
+        self.status["last_mid"] = mid
         self.mqtt_client.message_published = True
 
     def _handle_command(self):

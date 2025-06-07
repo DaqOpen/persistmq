@@ -20,6 +20,7 @@ my_persist_client.connect_async(mqtt_host="localhost", mqtt_port=1883)
 # Send some messages
 for i in range(20):
     my_persist_client.publish("dt/blah", f"Test Message {i:d}")
+    print(my_persist_client.get_status())
     time.sleep(1)
 
 # Stop the client process
