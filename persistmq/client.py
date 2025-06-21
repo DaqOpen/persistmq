@@ -156,6 +156,10 @@ class PersistMqWorker:
             )
             ''')
         self.db_connection.commit()
+        self.db_cursor.execute('''
+            CREATE INDEX idx_id ON messages (id)
+            ''')
+        self.db_connection.commit()
 
     def _get_cache_from_file(self):
         data_obj = None
